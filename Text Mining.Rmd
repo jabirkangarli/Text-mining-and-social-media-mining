@@ -1,0 +1,414 @@
+---
+title: "Text Mining Project"
+author: "Daria Ivanushenko, Jabir Kangarli"
+date: "1/12/2022"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data Overview
+
+In This dataset around 20.000 reviews from tripadvisor are presented. In this project following methods will be used: sentimental analysis and topic modeling. 
+
+
+```{r, message=FALSE, warning=FALSE}
+#turn off scientific notation
+options(scipen=999)
+
+#upload data
+setwd("~/DSBA/year 2/Semester1/Text mining/Text mining project")
+
+review <- readr::read_csv("tripadvisor_hotel_reviews.csv")
+head(review)
+str(review)
+
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+library(pander)
+
+pandoc.table(review[2:6,], 
+             justify = c('left', 'center'), style = 'grid')
+
+table(review$Rating)
+```
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+review %>%
+  summarize(number_rows = n())
+
+review %>%
+  group_by(Rating) %>%
+  summarize(number_rows = n())
+
+# We have more reviews for Rating 5 compared to Rating 1 and 2.
+
+review %>%
+    count(Rating,sort=TRUE) %>%
+    ggplot(aes(x= Rating, y=n)) +
+    geom_bar(stat="identity", fill = 'orange') +
+    geom_text(aes(label=n), vjust=1.4, hjust=1, color="white", size= 5)
+
+
+```
+
+# Sentiment Analysis
+## Data PreProcessing
+
+```{r}
+library(tidytext)
+
+#tokenization
+tidy_review <- review %>%
+  unnest_tokens(word, Review)
+
+head(tidy_review)
+```
+```{r}
+tidy_review %>%
+  count(word) %>%
+  arrange(desc(n))
+```
+```{r}
+tidy_review2 <- review %>%
+  unnest_tokens(word, Review) %>%
+  anti_join(stop_words)
+
+tidy_review2
+
+tidy_review2 %>%
+  count(word) %>%
+  arrange(desc(n))
+
+# We still see that the most frequent words are "hotel" and "n't". In the next step mentioned words will be removed from our data.
+```
+
+```{r}
+library(stopwords)
+library(ngram)
+
+#creating cusotm stop words
+custom_stop_words <- tibble(word = c("hotel", "room", "hotels", "1", "2", "3", "4", "5", "stay", "stayed", "restaurants","6", "30", "15", "20", "7", "la", "9", "10", "13", "16", "it__ç_é_", "don__ç_é_", "4th", "ac","100", "200", '12' , '27', 'n\'t', "wow", "5th", "1st","18", "2006", "2008", "dr", "ubid", "pike", "45", "14", "itc", "ike", "mtr", "mithila", "sarento", "marcial", "manggis", "30hk", "16yr", "matteo", "mocenigo", "bahn",  stopwords("en")))
+
+tidy_review2 = tidy_review2 %>%
+  anti_join(custom_stop_words, by = c("word" = "word"))
+
+#tidy_review2 = tidy_review  %>% 
+#  mutate(word = wordStem(word)) # for this method stemming cuts too many words and they are loosing their meaning that's why it was decided to continue analysis without it
+
+tidy_review2 %>%
+  count(word) %>%
+  arrange(desc(n))
+
+#tidy_review2 = removeNumbers(tidy_review2$stem)
+```
+
+
+```{r}
+tidy_review2 %>% 
+  count(word, sort = TRUE) %>% 
+  filter(n > 3000) %>% 
+  mutate(word = reorder(word, n)) %>% 
+  ggplot(aes(word, n, fill = word)) + 
+  geom_col(show.legend=FALSE) + 
+  xlab(NULL) + 
+  coord_flip() +
+  ggtitle("Review Word Counts")
+```
+
+The most frequent words are staff, nice and location.  
+
+## Sentiment Analysis by words
+
+```{r, message=FALSE, warning=FALSE }
+library(forcats)
+
+sentiment_review <- tidy_review2 %>%
+  inner_join(get_sentiments("bing"))
+
+# negative and positive sentiments
+sentiment_review %>%
+  count(sentiment)
+
+#  the most often words for a given sentiment
+sentiment_review %>%
+  count(word, sentiment) %>%
+  arrange(desc(n))
+
+counts_sentiment <- sentiment_review %>%
+  count(word, sentiment) %>%
+  group_by(sentiment) %>%
+  top_n(10, n) %>%
+  ungroup() %>%
+  mutate(word2 = fct_reorder(word, n))
+
+# visualization
+ggplot(counts_sentiment, aes(x=word2, y=n, fill=sentiment)) + 
+  geom_col(show.legend=FALSE) +
+  scale_fill_manual(values = c("Red", "Darkgreen")) +
+  facet_wrap(~sentiment, scales="free") +
+  coord_flip() +
+  labs(title = "Sentiment Word Counts",x = "Words") +
+  ylim(0, 15000)
+
+
+```
+
+The most frequent negative words are bad, noise, expensive, hard, cold ...      
+The most frequently appeared positive word in the review are following: nice, clean, friendly, excellent, helpful ...   
+
+## Sentiment Analysis by Rating
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyr)
+
+sentiment_rating <- tidy_review2 %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(Rating, sentiment) %>%
+  spread(sentiment, n) %>%
+  mutate(overall = positive - negative,
+         Stars = fct_reorder(as.factor(Rating), overall))
+
+ggplot(sentiment_rating, aes(x=Rating, y=overall, fill=as.factor(Rating))) + 
+  geom_col(show.legend=FALSE) +
+  coord_flip() +
+  scale_fill_manual(values = c("Red","Red",  "Darkgreen", "Darkgreen", "Darkgreen")) +
+  labs(title = "Overall Sentiment by Rating",
+       x = "Rating",
+       y = "Overall Sentiment")
+
+```
+
+As it is expected for the low rating our overall score is below 0 and the higher the rating the higher overall score we can observe.  
+
+## Wordcloud
+
+```{r, message=FALSE, warning=FALSE}
+
+library(wordcloud)
+library(reshape2)
+
+tidy_review2 %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100, colors = "#ec9a1c"))
+
+sentiment_review%>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("red", "darkgreen"),
+                   max.words = 100)
+```
+
+Negative part of the wordclud is represented by the following most frequent words: noise, expensive, bad, cold, dissapointed. As an example positive part of the word cloud has next words: great, good, nice, clean, fun, friendly, helpful, beautiful.  
+
+# Topic Modeling
+## Data Preparation
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tm)
+
+# combining data for modeling
+
+tidy_review_modeling = 
+  tidy_review2 %>% 
+  group_by(Rating) %>% 
+  summarise(text = str_c(word, collapse = " ")) %>% 
+  ungroup()
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+# creation corpus
+Corpus <- Corpus(VectorSource(tidy_review_modeling$text))
+DTM <- DocumentTermMatrix(Corpus)
+```
+
+## Choosing Number of Topics - K
+
+Due to the big amount of data, it was decided to divide it into sub samples.   
+
+Below code is commented as it is very time consuming. Results of the procedures are paste to the report in a form of image. 
+
+```{r}
+# Corpus_K1 <- Corpus(VectorSource(tidy_review_modeling$text[c(1,3)])) # make a corpus object
+# DTM_K1 <- DocumentTermMatrix(Corpus_K1)
+```
+
+
+```{r}
+# library(topicmodels)
+# library(ldatuning)
+# result_1 <- FindTopicsNumber(
+#   DTM_K1,
+#   topics = seq(from = 2, to = 15, by = 1),
+#   metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+#   method = "Gibbs",
+#   control = list(seed = 77),
+#   mc.cores = 2L,
+#   verbose = TRUE
+# )
+```
+
+```{r}
+#FindTopicsNumber_plot(result_1)
+```
+
+
+
+```{r, echo=FALSE, fig.cap="Figure 1. Number of Topics", out.width = '100%'}
+knitr::include_graphics("K1.png")  
+```  
+
+Based on the first plots the best number of K is 3-5.  
+
+```{r}
+# Corpus_K2 <- Corpus(VectorSource(tidy_review_modeling$text[c(2,5)])) # make a corpus object
+# DTM_K2 <- DocumentTermMatrix(Corpus_K2)
+# 
+# library(topicmodels)
+# library(ldatuning)
+# result_2 <- FindTopicsNumber(
+#   DTM_K2,
+#   topics = seq(from = 2, to = 15, by = 1),
+#   metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+#   method = "Gibbs",
+#   control = list(seed = 77),
+#   mc.cores = 2L,
+#   verbose = TRUE)
+# 
+# FindTopicsNumber_plot(result_2)
+
+```
+
+```{r, echo=FALSE, fig.cap="Figure 2. Number of Topics", out.width = '100%'}
+knitr::include_graphics("K2.png")  
+```  
+
+
+
+Plots based on the second sample are showing that we need to take K value equal to 4-5. Therefore we can assume that K should be equal to a value out of the range 3-5. After trying each of the separately it was decided to used K equal to 3, as it is the most informative.  
+
+```{r}
+# Corpus_K3 <- Corpus(VectorSource(tidy_review_modeling$text[c(3,4)])) # make a corpus object
+# DTM_K3 <- DocumentTermMatrix(Corpus_K3)
+# 
+# library(topicmodels)
+# library(ldatuning)
+# result_3 <- FindTopicsNumber(
+#   DTM_K3,
+#   topics = seq(from = 2, to = 15, by = 1),
+#   metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+#   method = "Gibbs",
+#   control = list(seed = 77),
+#   mc.cores = 2L,
+#   verbose = TRUE)
+# 
+# FindTopicsNumber_plot(result_3)
+
+```
+
+## LDA Modelling
+
+```{r, message=FALSE, warning=FALSE}
+library(topicmodels) 
+library(tm)
+library(tidytext)
+
+unique_indexes <- unique(DTM$i) # unique index
+DTM <- DTM[unique_indexes,]
+
+# LDA modeling
+# k - the number of topics that we specified
+# beta - the word probabilities to define the topics
+
+lda <- LDA(DTM, k = 3, control = list(seed = 1234))
+tidy_topics <- tidy(lda, matrix = "beta")
+```
+
+```{r}
+# stemming
+library(SnowballC)
+library(dplyr)
+tidy_topics <- tidy_topics %>% 
+    mutate(stem = wordStem(term))
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+
+
+tidy_topics  %>% 
+  group_by(topic) %>% 
+  top_n(10, beta) %>% 
+  ungroup() %>% 
+  arrange(topic, -beta) %>% 
+  mutate(term = reorder(term, beta)) %>% 
+  ggplot(aes(term, beta, fill = factor(topic))) + 
+  geom_col(show.legend = FALSE) + 
+  facet_wrap(~ topic, scales = "free") +
+  labs(x = NULL, y = "Beta") +
+  coord_flip() +
+  ylim(0, 0.017) + # sa,e y-axis for all the graphs
+  scale_fill_manual(values = c("orange","Darkgreen",  "deeppink3"))
+
+
+```
+
+We can notice that topics 2 and 3 are similar to each other. However, we can identified some similarities and main ideas of each topic. 1 topics is describing good time that customer can have in the hotel and rooms and stuff. 2nd topics describes beach and pool. 3rd topic is about staff, food, and location.   
+
+## TF-IDF Modelling
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidytext)
+
+# counts of words for specific review
+review_words = tidy_review2 %>%
+  count(Rating, word, sort = TRUE)
+
+# total counts of words for all the reviews
+total_words = review_words %>% 
+  group_by(Rating) %>% 
+  summarize(total = sum(n))
+
+review_words = left_join(review_words, total_words)
+
+# caclucating td-idf score
+tf_idf = review_words %>%
+  bind_tf_idf(word, Rating, n) %>%
+  select(-total) %>%
+  arrange(desc(tf_idf))
+
+# visualization
+tf_idf %>% 
+  group_by(Rating) %>% 
+  top_n(5) %>% 
+  ungroup %>%
+  ggplot(aes(word, tf_idf, fill = as.factor(Rating))) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~Rating, scales = "free") +
+  coord_flip() +
+  ylim(0, 0.00009) +
+  theme(axis.text.x=element_text(angle = -50, hjust = 0)) +
+  scale_fill_manual(values = c("orange","Darkgreen",  "deeppink3", "cornflowerblue", "darkcyan"))
+
+```
+
+We can say that this supervised learning method did not provide any useful insights regarding our data. The words with higher tf-idf score are common to the for the Review for specific Rating and uncommon across all the reviews.   
+
+
+We can notice that all the reviews are very similar to each other.  
+
+Source:  
+1. [source](https://cran.r-project.org/web/packages/ldatuning/vignettes/topics.html)  
